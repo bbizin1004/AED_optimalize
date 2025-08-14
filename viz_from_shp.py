@@ -12,6 +12,8 @@ import matplotlib.pyplot as plt
 import folium
 from folium.features import GeoJsonTooltip
 
+plt.rcParams['font.family'] = 'Malgun Gothic'
+
 BASE = Path(__file__).resolve().parent
 DATA = BASE / "data"
 OUT  = BASE / "output"

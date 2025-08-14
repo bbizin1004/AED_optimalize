@@ -37,9 +37,8 @@ RANK_P_UNDER  = next((OUT.glob("aed_under_alloc_top10_poisson.csv")), None)
 # 기본 Shapefile 패턴(동남+서북)
 SHP_FILES = list(DATA.glob("bnd_dong_*_*.shp"))
 
-# ------------------------------
+
 # 유틸
-# ------------------------------
 def norm(s):
     if s is None or (isinstance(s, float) and np.isnan(s)): return None
     s = str(s)
@@ -149,9 +148,8 @@ def load_rank_csvs() -> tuple[pd.DataFrame|None, pd.DataFrame|None]:
             (pd.read_csv(RANK_P_UNDER) if RANK_P_UNDER and RANK_P_UNDER.exists() else None)
     return over, under
 
-# ------------------------------
+
 # UI
-# ------------------------------
 st.set_page_config(page_title="천안시 AED 분석", layout="wide")
 st.title("천안시 AED 배치 분석 대시보드")
 
@@ -196,12 +194,11 @@ with c3:
 with c4:
     st.metric("65세 이상 인구", f"{int(np.nansum(df_final['pop_65p'])):,}")
 
-# ------------------------------
+
 # 탭
-# ------------------------------
 tab1, tab2, tab3 = st.tabs(["🗺 지도", "📊 랭킹", "🔬 산점도"])
 
-# ---- TAB1: 지도 ----
+#TAB1: 지도 
 with tab1:
     st.subheader("행정동별 AED 밀도 지도")
     # 분위 경계
@@ -249,7 +246,7 @@ with tab1:
 
     st_folium(m, height=620, use_container_width=True)
 
-# ---- TAB2: 랭킹 ----
+#TAB2: 랭킹
 with tab2:
     st.subheader("예상 대비 과다/과소 배치 TOP10 (표준화 잔차)")
     over_df, under_df = load_rank_csvs()
@@ -290,7 +287,7 @@ with tab2:
                 st.pyplot(plt.gcf())
                 plt.close()
 
-# ---- TAB3: 산점도 ----
+#TAB3: 산점도
 with tab3:
     st.subheader("관계 탐색")
     c1, c2 = st.columns(2)
