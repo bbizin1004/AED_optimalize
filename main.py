@@ -500,6 +500,70 @@ under_top = rank_df.sort_values("std_resid", ascending=True).head(10)
 over_top.to_csv(OUT / f"aed_over_alloc_top10_{resid_label}.csv",  index=False, encoding="utf-8-sig")
 under_top.to_csv(OUT / f"aed_under_alloc_top10_{resid_label}.csv", index=False, encoding="utf-8-sig")
 
+
+
+# =========================================
+# 6) 가설4: 도심(동) vs 읍/면 불균형 검정
+#  - 지표: AED/1만명, AED/1천명(65+), 선택적으로 AED/km^2(면적 필요 시)
+#  - 방법: 정규성 가정 애매하므로 Mann-Whitney U 기본 + t-test도 병행 보고
+# =========================================
+grp_df = final.copy()
+
+# 행정구역 유형: 동 / 읍면
+def classify_emd(name: str):
+    if not isinstance(name, str): return np.nan
+    if name.endswith("동"): return "dong"
+    if name.endswith("읍") or name.endswith("면"): return "eupmyeon"
+    return "other"
+
+grp_df["emd_type"] = grp_df["emd_nm"].apply(classify_emd)
+grp_df = grp_df[grp_df["emd_type"].isin(["dong","eupmyeon"])].copy()
+
+# 지표 준비
+grp_df["aed_per_10k"]    = np.where(grp_df["pop_total"]>0, grp_df["aed_count"]/grp_df["pop_total"]*10000, np.nan)
+grp_df["aed_per_1k_65p"] = np.where(grp_df["pop_65p"]>0,   grp_df["aed_count"]/grp_df["pop_65p"]*1000,   np.nan)
+
+# 그룹별 요약
+summary = (grp_df
+           .groupby("emd_type")[["aed_count","pop_total","pop_65p","aed_per_10k","aed_per_1k_65p"]]
+           .agg(["count","mean","std","median"])
+           )
+
+# 검정 함수
+def two_group_tests(series_name):
+    a = grp_df.loc[grp_df["emd_type"]=="dong", series_name].dropna()
+    b = grp_df.loc[grp_df["emd_type"]=="eupmyeon", series_name].dropna()
+    out = {"metric": series_name, "n_dong": len(a), "n_eupmyeon": len(b)}
+    if len(a)>=3 and len(b)>=3:
+        # Mann-Whitney (비모수)
+        U, p_u = stats.mannwhitneyu(a, b, alternative="two-sided")
+        out.update({"mw_U": U, "mw_p": p_u})
+        # t-test (정규성 가정 참고용)
+        t, p_t = stats.ttest_ind(a, b, equal_var=False, nan_policy="omit")
+        out.update({"t_stat": t, "t_p": p_t})
+    else:
+        out.update({"mw_U": np.nan, "mw_p": np.nan, "t_stat": np.nan, "t_p": np.nan, "note":"표본 부족"})
+    return out
+
+tests_g4 = []
+for col in ["aed_per_10k","aed_per_1k_65p","aed_count"]:
+    tests_g4.append(two_group_tests(col))
+
+g4_out = pd.DataFrame(tests_g4)
+g4_path = OUT / "aed_hypo4_group_compare.csv"
+g4_out.to_csv(g4_path, index=False, encoding="utf-8-sig")
+
+# 콘솔 출력
+print("\n=== [가설4: 도심(동) vs 읍·면 불균형 검정] ===")
+print("- 요약 통계(상위 5행):")
+print(summary.head())
+print("- 검정 결과:")
+for _, r in g4_out.iterrows():
+    print(f"{r['metric']}: Mann-Whitney U={r['mw_U'] if pd.notna(r['mw_U']) else 'NA'} (p={r['mw_p'] if pd.notna(r['mw_p']) else 'NA'}), "
+          f"t={r['t_stat'] if pd.notna(r['t_stat']) else 'NA'} (p={r['t_p'] if pd.notna(r['t_p']) else 'NA'})")
+print(f"[저장] 가설4 결과: {g4_path}")
+
+
 # =========================================
 # 출력 로그
 # =========================================
