@@ -565,6 +565,158 @@ print(f"[저장] 가설4 결과: {g4_path}")
 
 
 # =========================================
+# 7) 접근성 가설(H5): 동별 최소거리 & 인구 커버리지
+# =========================================
+from math import radians, sin, cos, asin, sqrt
+import warnings
+
+AED_GEO_CSV = OUT / "aed_geocoded.csv"
+if not AED_GEO_CSV.exists():
+    warnings.warn(f"접근성 계산을 건너뜁니다. {AED_GEO_CSV} 가 없습니다. 우선 geocode_aed.py 를 실행하세요.")
+else:
+    aed_geo = pd.read_csv(AED_GEO_CSV, dtype={"lat":"float64","lon":"float64"})
+    aed_geo = aed_geo.dropna(subset=["lat","lon"]).copy()
+    if len(aed_geo)==0:
+        warnings.warn("지오코딩된 AED가 없습니다."); aed_geo=None
+
+if aed_geo is not None:
+    # 7-1) 읍면동 중심점(centroid) 좌표 가져오기
+    # 우선 geopandas 시도 → 실패 시 pop-weighted centroid 근사(없으면 그냥 생략)
+    emd_cent = None
+    try:
+        import geopandas as gpd
+        from shapely.geometry import Point
+        # 너가 지도 그릴 때 썼던 SHP 2개를 다시 사용
+        SHP1 = DATA / "bnd_dong_34011_2024_2Q.shp"
+        SHP2 = DATA / "bnd_dong_34012_2024_2Q.shp"
+        g1 = gpd.read_file(SHP1)
+        g2 = gpd.read_file(SHP2)
+        g = pd.concat([g1,g2], ignore_index=True)
+        # 행정동명/코드 표준화
+        # 컬럼명은 네가 이전 스크립트에서 확인한 것과 맞춰줘
+        g = g.rename(columns={"ADM_CD":"adm_cd","ADM_NM":"emd_nm"})
+        g = g.merge(codes_cheonan[["adm_cd","gu","emd_nm"]], on=["adm_cd","emd_nm"], how="inner")
+        # 투영 좌표계(미터)에서 centroid 계산 → centroid를 WGS84로 변환해서 저장
+        g_proj = g.to_crs(epsg=5179)
+        centroids_proj = g_proj.geometry.centroid                      # 5179에서 centroid
+        centroids_wgs  = centroids_proj.to_crs(epsg=4326)              # WGS84로 변환
+
+        # 본체 지오메트리도 WGS84로 맞춰 두면 이후 일관성 좋음
+        g = g_proj.to_crs(epsg=4326)
+
+        # centroid를 별도 열로 WGS84 지오메트리로 저장
+        g = g.assign(centroid=centroids_wgs)
+
+        emd_cent = g[["adm_cd","gu","emd_nm","centroid"]].copy()
+        emd_cent["lat"] = emd_cent["centroid"].y
+        emd_cent["lon"] = emd_cent["centroid"].x
+        emd_cent = pd.DataFrame(emd_cent.drop(columns=["centroid"]))
+    except Exception as e:
+        warnings.warn(f"geopandas 경로로 centroids 생성 실패: {e}. 센트로이드 근사 생략.")
+        # centroids가 없으면 거리/커버리지 정확 계산은 불가
+
+    # 7-2) 거리 함수(Haversine)
+    def hav_km(lat1, lon1, lat2, lon2):
+        # 모두 라디안 변환 후 벡터 연산
+        lat1 = np.radians(lat1); lon1 = np.radians(lon1)
+        lat2 = np.radians(lat2); lon2 = np.radians(lon2)
+        dlat = lat2 - lat1; dlon = lon2 - lon1
+        a = np.sin(dlat/2.0)**2 + np.cos(lat1)*np.cos(lat2)*np.sin(dlon/2.0)**2
+        c = 2*np.arcsin(np.sqrt(a))
+        return 6371.0088 * c  # km
+
+    # 7-3) 동별 최소거리 계산
+    access_df = final[["adm_cd","gu","emd_nm","pop_total","pop_65p"]].copy()
+    if emd_cent is not None:
+        access_df = access_df.merge(emd_cent, on=["adm_cd","gu","emd_nm"], how="left")
+        # 각 동 센트로이드 → 모든 AED 거리 중 최소
+        a_lat = aed_geo["lat"].to_numpy()
+        a_lon = aed_geo["lon"].to_numpy()
+        mins = []
+        for _, r in access_df.iterrows():
+            if pd.isna(r["lat"]) or pd.isna(r["lon"]) or len(a_lat)==0:
+                mins.append(np.nan); continue
+            d_km = hav_km(r["lat"], r["lon"], a_lat, a_lon)  # 브로드캐스트
+            mins.append(float(np.nanmin(d_km)))
+        access_df["min_dist_m"] = np.array(mins) * 1000.0
+    else:
+        access_df["min_dist_m"] = np.nan
+
+    # 7-4) 간단 커버리지(200m/300m)
+    # geopandas 있으면 면적비율 기반, 없으면 센트로이드 근사(센트로이드가 반경 내면 전인구 커버로 가정)
+    access_df["cov200_pop_share"] = np.nan
+    access_df["cov300_pop_share"] = np.nan
+
+    try:
+        import geopandas as gpd
+        from shapely.geometry import Point
+        # 좌표계 준비
+        # 천안 근방 UTM-K(5179)로 버퍼 계산
+        g1 = gpd.read_file(DATA / "bnd_dong_34011_2024_2Q.shp")
+        g2 = gpd.read_file(DATA / "bnd_dong_34012_2024_2Q.shp")
+        g = pd.concat([g1,g2], ignore_index=True)
+        g = g.rename(columns={"ADM_CD":"adm_cd","ADM_NM":"emd_nm"})
+        g = g.merge(codes_cheonan[["adm_cd","gu","emd_nm"]], on=["adm_cd","emd_nm"], how="inner")
+
+        emd_gdf = g.to_crs(epsg=5179)  # meter 기반
+        # AED 포인트 GDF
+        aed_gdf = gpd.GeoDataFrame(aed_geo.dropna(subset=["lat","lon"]).copy(),
+                                   geometry=gpd.points_from_xy(aed_geo["lon"], aed_geo["lat"]), crs="EPSG:4326").to_crs(5179)
+
+        def coverage_share(buffer_m):
+            aed_buf = aed_gdf.geometry.buffer(buffer_m)
+            union_geom = aed_buf.union_all()  # 단일 geometry 반환
+            inter_area = emd_gdf.geometry.intersection(union_geom).area
+            share = (inter_area / emd_gdf.geometry.area).fillna(0.0).clip(0,1)
+            return pd.Series(share.values, index=emd_gdf["adm_cd"].values)
+
+        cov200 = coverage_share(200.0)
+        cov300 = coverage_share(300.0)
+        access_df = access_df.merge(cov200.rename("cov200_area_share"), left_on="adm_cd", right_index=True, how="left")
+        access_df = access_df.merge(cov300.rename("cov300_area_share"), left_on="adm_cd", right_index=True, how="left")
+
+        # 인구 커버 비율 = 면적 커버 비율을 균질 가정으로 근사
+        access_df["cov200_pop_share"] = access_df["cov200_area_share"]
+        access_df["cov300_pop_share"] = access_df["cov300_area_share"]
+
+    except Exception as e:
+        warnings.warn(f"정밀 커버리지(면적) 계산 실패: {e}. 센트로이드 근사로 대체합니다.")
+        # 근사: min_dist <= R 이면 100% 커버, 아니면 0%
+        access_df["cov200_pop_share"] = np.where(access_df["min_dist_m"]<=200, 1.0, 0.0)
+        access_df["cov300_pop_share"] = np.where(access_df["min_dist_m"]<=300, 1.0, 0.0)
+
+    # 결과 저장
+    acc_out = OUT / "aed_accessibility_by_emd.csv"
+    access_df.to_csv(acc_out, index=False, encoding="utf-8-sig")
+
+    # 접근성 요약/검정(도심 vs 읍면)
+    def classify_emd(name: str):
+        if isinstance(name, str) and name.endswith("동"): return "dong"
+        if isinstance(name, str) and (name.endswith("읍") or name.endswith("면")): return "eupmyeon"
+        return "other"
+
+    access_df["emd_type"] = access_df["emd_nm"].apply(classify_emd)
+    acc_sum = (access_df
+               .groupby("emd_type")[["min_dist_m","cov200_pop_share","cov300_pop_share"]]
+               .agg(["count","mean","std","median"]))
+    print("\n=== [접근성 요약] ===")
+    print(acc_sum.head())
+
+    # Mann–Whitney: 동 vs 읍면 최소거리 차이
+    from scipy import stats as _st
+    a = access_df.loc[access_df["emd_type"]=="dong", "min_dist_m"].dropna()
+    b = access_df.loc[access_df["emd_type"]=="eupmyeon", "min_dist_m"].dropna()
+    if len(a)>=3 and len(b)>=3:
+        U, p = _st.mannwhitneyu(a, b, alternative="two-sided")
+        print(f"\n[H5 검정] 최소거리(미터) 동 vs 읍면 → Mann-Whitney U={U:.1f}, p={p:.3g}")
+    else:
+        print("\n[H5 검정] 표본 부족으로 Mann-Whitney 생략")
+
+    print(f"[저장] 접근성 지표: {acc_out}")
+
+
+
+# =========================================
 # 출력 로그
 # =========================================
 print(f"[OK] 저장: {final_csv}")
