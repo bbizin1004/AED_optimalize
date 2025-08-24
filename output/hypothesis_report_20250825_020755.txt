@@ -1,0 +1,73 @@
+천안시 AED 최적화 - 가설 검증 리포트
+==============================================================================
+
+가설 0. 데이터/산출물 생성 현황
+-------------------
+- 근거: 천안시 읍·면·동 단위 AED·인구 집계 완료, GLM 진단/랭킹 포함.
+  · 행 수: 31
+  · AED 매핑 성공 건수: 595 / 595
+  · 선택된 AED 시트명: 천안시
+  · 인구 기준 월: 2025.07
+- 저장: AED-인구 집계(CSV) → C:\02Workspace\sessac\AED project\output\cheonan_eupmyeondong_aed_pop.csv
+- 저장: AED-인구 집계(XLSX) → C:\02Workspace\sessac\AED project\output\cheonan_eupmyeondong_aed_pop.xlsx
+
+가설 1. 도심(동) vs 읍·면 AED 불균형 검정
+-----------------------------
+- 근거: 국내외에서 도심/비도심 간 설치 밀도·접근성 격차가 보고됨.
+- 읍·면·동 그룹별 AED/인구 지표 요약:
+         aed_count                              pop_total                                      pop_65p                                   aed_per_10k                                   aed_per_1k_65p                                
+             count       mean        std median     count          mean           std   median   count         mean          std  median       count       mean         std     median          count       mean        std    median
+emd_type                                                                                                                                                                                                                             
+dong            19   5.789474  13.193344    2.0        19  28364.368421  17926.183414  24628.0      19  3411.789474  1592.222681  3266.0          19   2.058616    3.347637   0.812084             19   2.105747   4.325442  0.623830
+eupmyeon        12  40.416667  51.978069   20.0        12  10312.833333   8424.259340   6758.5      12  2683.750000  1740.546316  2006.5          12  95.998052  165.603737  28.395261             12  24.340376  36.823125  7.801251
+
+- 검정: aed_per_10k - Mann-Whitney:, U=8.000, p=1.59e-05
+- 검정: aed_per_10k - t-test:, t=-1.965, p=0.075
+- 검정: aed_per_1k_65p - Mann-Whitney:, U=21.000, p=0.000
+- 검정: aed_per_1k_65p - t-test:, t=-2.083, p=0.061
+- 검정: aed_count - Mann-Whitney:, U=18.500, p=9.97e-05
+- 검정: aed_count - t-test:, t=-2.262, p=0.043
+- 저장: 그룹 비교 테이블 → C:\02Workspace\sessac\AED project\output\aed_hypo4_group_compare.csv
+
+가설 2. 접근성 격차(동 vs 읍·면): 최소거리·200/300m 커버리지 차이
+---------------------------------------------
+- 근거: 비도심 지역은 시설 간격·밀도 문제로 AED 실접근성이 낮다는 보고.
+- 접근성 지표 요약:
+         min_dist_m                                       cov200_pop_share                               cov300_pop_share                              
+              count         mean         std       median            count      mean       std    median            count      mean       std    median
+emd_type                                                                                                                                               
+dong             19   273.602018  151.775351   240.441976               19  0.310376  0.138657  0.327223               19  0.533993  0.215000  0.543484
+eupmyeon         12  1145.255160  518.264828  1081.725520               12  0.021307  0.013134  0.018046               12  0.046016  0.027434  0.039231
+
+- 검정: Mann–Whitney (최소거리, m):, U=2.000, p=6.13e-06
+- 저장: 접근성 지표 집계 → C:\02Workspace\sessac\AED project\output\aed_accessibility_by_emd.csv
+
+가설 3. AED 수가 인구(또는 65+) 비례 가정을 따르는가
+-----------------------------------
+- 근거: 비례 가설에서 크게 벗어나면 수요 대비 과/소배치 가능성.
+- Chi-square (인구 비례): chi2=13833.67, df=30, p=0, 기대빈도<5 비율=0.194
+- Chi-square (65세이상 비례): chi2=4771.98, df=30, p=0, 기대빈도<5 비율=0.0
+- 저장: 검정 요약 CSV → C:\02Workspace\sessac\AED project\output\aed_tests_summary.csv
+
+가설 4. AED 수와 총인구·고령인구의 상관관계
+---------------------------
+- 근거: 단순 상관으로 1차 연관성 점검(인과 아님).
+- Correlation (AED~총인구): Spearman rho=-0.299 (p=0.102), Pearson r=-0.268 (p=0.146)
+- Correlation (AED~65세이상): Spearman rho=-0.221 (p=0.233), Pearson r=-0.279 (p=0.128)
+
+가설 5. 고령비(old_ratio)가 AED 수에 미치는 영향 (오프셋=log 인구)
+------------------------------------------------
+- 근거: 인구 규모 통제 후 고령 구조가 설치량과 연관되는지 GLM으로 확인.
+- [Poisson] old_ratio: coef=11.935 (SE=0.311), p=0
+  · 과산포(대략) deviance/df: 41.23 → 과산포 큼: NB 해석 권장
+- [NegativeBinomial] old_ratio: coef=10.674 (SE=1.445), p=1.49e-13
+- 저장: GLM 진단(예측/잔차) → C:\02Workspace\sessac\AED project\output\aed_glm_diagnostics.csv
+- 저장: 과다 배치 Top10 → C:\02Workspace\sessac\AED project\output\aed_over_alloc_top10_nb.csv
+- 저장: 과소 배치 Top10 → C:\02Workspace\sessac\AED project\output\aed_under_alloc_top10_nb.csv
+
+가설 6. 해석 가이드(짧게)
+----------------
+- 카이제곱: p<0.05 → ‘인구(또는 65+) 비례’ 가정에서 유의하게 벗어남
+- 상관: p<0.05 & 계수 크면 AED 수와 인구 사이 연관성 시사(인과 아님)
+- GLM: old_ratio 계수 유의·양(+) → 인구 통제하 고령비 ↑ 지역에 AED ↑ 경향
+
